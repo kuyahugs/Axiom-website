@@ -560,7 +560,7 @@
       document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
     })();
 
-    /* CHATBOT */
+    /* CHATBOT — rule-based, no API required */
     (() => {
       const trigger  = document.getElementById('chatTrigger');
       const win      = document.getElementById('chatWindow');
@@ -570,39 +570,98 @@
       const sendBtn  = document.getElementById('chatSend');
       const quickEl  = document.getElementById('chatQuick');
 
-      let isOpen = false, busy = false, history = [];
+      let isOpen = false, busy = false, turnCount = 0;
+      let awaitingEmail = false, awaitingDay = false, collectedEmail = '';
 
-      const SYSTEM = `You are a friendly, calm, and professional assistant for Claré — a virtual assistant agency offering executive assistants, customer service reps, video editors, and social media managers for growing businesses.
+      const RULES = [
+        { keys: ['service','offer','do','provide','help','what do'],
+          reply: 'We offer executive assistance, customer support, video editing, and social media management. Which area is most relevant to you right now?' },
+        { keys: ['executive','assistant','calendar','inbox','admin','schedule'],
+          reply: 'Our executive assistants handle calendars, inboxes, scheduling, and day-to-day admin. What does that workload look like for you?' },
+        { keys: ['customer','support','ticket','crm','live chat'],
+          reply: 'We provide structured customer support across email and live chat. Is response time the main issue right now?' },
+        { keys: ['video','edit','reel','tiktok','youtube','short form'],
+          reply: 'We handle short and long-form video editing, repurposing, and posting workflows. What platform are you focused on?' },
+        { keys: ['social media','instagram','post','schedule','community'],
+          reply: 'We manage content scheduling, community responses, and posting. What part of social feels most behind right now?' },
+        { keys: ['price','cost','how much','rate','fee','budget','afford'],
+          reply: 'Pricing depends on the support structure you need. A short call would help us give you an accurate figure.' },
+        { keys: ['trust','reliable','guarantee','legit','experience'],
+          reply: 'Understandable. Our approach prioritizes communication and consistency. Happy to walk through our process on a short call.' },
+        { keys: ['busy','no time','overwhelmed','too much','swamped'],
+          reply: 'Completely get that. The goal is reducing your workload, not adding to it. Worth a quick 10-minute discussion?' },
+        { keys: ['how','process','start','onboard','begin','setup','work'],
+          reply: 'Discovery call first — we learn your workflow, then match you with the right person. Most clients are operational within two weeks.' },
+        { keys: ['fast','quick','soon','when','timeline','urgent'],
+          reply: 'Most clients are fully onboarded within two weeks of their first call. Should we get that started?' },
+        { keys: ['where','location','remote','timezone','country','global'],
+          reply: 'We support businesses remotely across multiple time zones. Coverage depends on your operational needs.' },
+        { keys: ['different','unique','better','why you','stand out','compare'],
+          reply: 'We are a dedicated operational partner — not a freelance marketplace. We stay involved and ensure quality throughout.' },
+        { keys: ['call','meeting','talk','book','schedule','appointment','yes','sure','ok','okay','sounds good','interested'],
+          reply: "Perfect. What's the best email to send the invite to?" },
+        { keys: ['no','not now','not interested','maybe later'],
+          reply: 'No problem. If anything changes, reach us at hello@clare.co anytime.' },
+      ];
 
-Your role:
-1. Answer questions about Claré's services warmly and clearly
-2. Understand what kind of support the visitor needs (qualify the lead)
-3. Encourage interested visitors to book a discovery call at hello@clare.co
+      const PIVOTS = [
+        'Might be easier to review your setup briefly on a call.',
+        'Worth a short call to see exactly where support fits.',
+        'Happy to walk through it on a quick 10-minute call.',
+        'Should we do a quick workflow audit? Takes about 10 minutes.',
+      ];
 
-Key facts:
-- Services: Executive Assistance, Customer Service, Video Editing, Social Media Management
-- Positioning: A reliable operational partner — not cheap outsourcing
-- Process: Discovery call → Team Matching → Ongoing Support
-- Typical onboarding: 1–2 weeks after first call
-- Pricing: Custom based on scope (discovery call clarifies this)
+      const FALLBACKS = [
+        "What part of your operations is taking the most time right now?",
+        "Where's the biggest bottleneck in your workflow?",
+        "Are you looking for daily support or project-based help?",
+        "What feels most overloaded right now?",
+      ];
 
-Tone: Calm, warm, direct, never salesy. Match the quiet luxury brand. Keep responses to 2–3 sentences max.`;
+      function match(text) {
+        const lower = text.toLowerCase();
+        for (const rule of RULES) {
+          if (rule.keys.some(k => lower.includes(k))) return rule.reply;
+        }
+        return null;
+      }
 
-      const QUICK = [
+      function getReply(userMsg) {
+        if (awaitingEmail) {
+          if (userMsg.includes('@')) {
+            collectedEmail = userMsg.trim();
+            awaitingEmail = false;
+            awaitingDay = true;
+            return 'Got it. What day works best for a short call?';
+          }
+          return 'Could you share your work email so we can send the invite?';
+        }
+        if (awaitingDay) {
+          awaitingDay = false;
+          return 'Noted. We will send details to ' + collectedEmail + ' shortly. Looking forward to speaking with you.';
+        }
+        const matched = match(userMsg);
+        if (matched && matched.includes('best email')) { awaitingEmail = true; return matched; }
+        if (turnCount >= 2) {
+          turnCount = 0;
+          return PIVOTS[Math.floor(Math.random() * PIVOTS.length)];
+        }
+        return matched || FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
+      }
+
+      const QUICK_INIT = [
         'What services do you offer?',
         'How does pricing work?',
-        'How quickly can I start?',
+        'How fast can we start?',
         'What makes you different?',
       ];
 
       function addMsg(role, text) {
         const wrap = document.createElement('div');
-        wrap.className = `msg msg--${role === 'assistant' ? 'a' : 'u'}`;
-        if (role === 'assistant') {
-          wrap.innerHTML = `<div class="msg__av" aria-hidden="true">C</div><div class="msg__b">${text}</div>`;
-        } else {
-          wrap.innerHTML = `<div class="msg__b">${text}</div>`;
-        }
+        wrap.className = 'msg msg--' + (role === 'bot' ? 'a' : 'u');
+        wrap.innerHTML = role === 'bot'
+          ? '<div class="msg__av" aria-hidden="true">C</div><div class="msg__b">' + text + '</div>'
+          : '<div class="msg__b">' + text + '</div>';
         msgs.appendChild(wrap);
         msgs.scrollTop = msgs.scrollHeight;
       }
@@ -610,14 +669,12 @@ Tone: Calm, warm, direct, never salesy. Match the quiet luxury brand. Keep respo
       function showTyping() {
         const d = document.createElement('div');
         d.className = 'msg msg--a'; d.id = 'typing';
-        d.innerHTML = `<div class="msg__av" aria-hidden="true">C</div><div class="msg__b"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+        d.innerHTML = '<div class="msg__av" aria-hidden="true">C</div><div class="msg__b"><div class="typing-dots"><span></span><span></span><span></span></div></div>';
         msgs.appendChild(d);
         msgs.scrollTop = msgs.scrollHeight;
       }
 
-      function hideTyping() {
-        document.getElementById('typing')?.remove();
-      }
+      function hideTyping() { document.getElementById('typing')?.remove(); }
 
       function renderQuick(items) {
         quickEl.innerHTML = '';
@@ -630,26 +687,7 @@ Tone: Calm, warm, direct, never salesy. Match the quiet luxury brand. Keep respo
         });
       }
 
-      async function callAPI(userMsg) {
-        history.push({ role: 'user', content: userMsg });
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 256,
-            system: SYSTEM,
-            messages: history,
-          }),
-        });
-        if (!res.ok) throw new Error('API error');
-        const data = await res.json();
-        const reply = data.content?.[0]?.text || "I'm not sure — please email us at hello@clare.co and we'll get back to you shortly.";
-        history.push({ role: 'assistant', content: reply });
-        return reply;
-      }
-
-      async function send(text) {
+      function send(text) {
         const msg = (text || input.value).trim();
         if (!msg || busy) return;
         busy = true;
@@ -657,17 +695,13 @@ Tone: Calm, warm, direct, never salesy. Match the quiet luxury brand. Keep respo
         quickEl.innerHTML = '';
         addMsg('user', msg);
         showTyping();
-        try {
-          const reply = await callAPI(msg);
+        turnCount++;
+        setTimeout(() => {
           hideTyping();
-          addMsg('assistant', reply);
-        } catch {
-          hideTyping();
-          addMsg('assistant', 'Something went wrong on my end. Please reach out at hello@clare.co — we\'re happy to help.');
-        } finally {
+          addMsg('bot', getReply(msg));
           busy = false;
           input.focus();
-        }
+        }, 650 + Math.random() * 500);
       }
 
       function open_() {
@@ -677,8 +711,8 @@ Tone: Calm, warm, direct, never salesy. Match the quiet luxury brand. Keep respo
         input.focus();
         if (!msgs.children.length) {
           setTimeout(() => {
-            addMsg('assistant', 'Hi there — welcome to Claré. I can answer questions about our services or help you figure out what kind of support your business needs. What\'s on your mind?');
-            setTimeout(() => renderQuick(QUICK), 350);
+            addMsg('bot', 'Welcome to Clare. What part of your operations is taking the most time right now?');
+            setTimeout(() => renderQuick(QUICK_INIT), 350);
           }, 280);
         }
       }
